@@ -1,0 +1,9 @@
+streamlit
+langchain==0.3.28
+langchain-community==0.3.28
+langchain-openai==0.3.28
+langchain-huggingface==0.1.2
+chromadb==0.6.3
+sentence-transformers==3.4.1
+pymupdf==1.25.5
+python-dotenv
