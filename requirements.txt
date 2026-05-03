@@ -3,8 +3,7 @@ langchain==0.3.28
 langchain-community==0.3.28
 langchain-openai==0.3.28
 langchain-huggingface==0.1.2
-chromadb==0.4.24
+faiss-cpu
 sentence-transformers==3.4.1
 pymupdf==1.25.5
 python-dotenv
-protobuf==4.25.3

@@ -1,16 +1,17 @@
 import os
 import re
 import streamlit as st
-from langchain_community.vectorstores import Chroma
+from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.prompts import PromptTemplate
 from dotenv import load_dotenv
+
 load_dotenv()
 
-# Page config
+# ── Page config ───────────────────────────────────────────
 st.set_page_config(
     page_title="CBSE Science Tutor",
     page_icon="🔬",
@@ -19,14 +20,14 @@ st.set_page_config(
 st.title("🔬 CBSE Science Tutor")
 st.caption("Your personal NCERT Science mentor — Class 10")
 
-# Language config 
+# ── Language config ───────────────────────────────────────
 LANGUAGE_MAP = {
     "English": "English",
     "हिंदी (Hindi)": "Hindi",
     "मराठी (Marathi)": "Marathi"
 }
 
-# Sidebar
+# ── Sidebar ───────────────────────────────────────────────
 with st.sidebar:
     st.header("⚙️ Settings")
     selected_lang = st.selectbox(
@@ -41,7 +42,6 @@ with st.sidebar:
     st.caption("Test your knowledge on any topic")
     generate_quiz = st.button("🎯 Generate Quiz", use_container_width=True)
 
-    # Topic input appears right below Generate Quiz button
     if st.session_state.get("quiz_requested") and "quiz_questions" not in st.session_state:
         quiz_topic = st.text_input(
             "📚 Which topic should I quiz you on?",
@@ -53,7 +53,6 @@ with st.sidebar:
         quiz_topic = ""
         confirm = False
 
-    # Clear conversation at the very bottom
     st.divider()
     if st.button("🔄 Clear Conversation", use_container_width=True):
         st.session_state.messages = []
@@ -64,15 +63,16 @@ with st.sidebar:
                 del st.session_state[key]
         st.rerun()
 
-# Load components (cached)
+# ── Load components (cached) ──────────────────────────────
 @st.cache_resource
 def load_components():
     embedding_model = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
-    vectorstore = Chroma(
-        persist_directory="./chroma_db",
-        embedding_function=embedding_model
+    vectorstore = FAISS.load_local(
+        "./faiss_db",
+        embedding_model,
+        allow_dangerous_deserialization=True
     )
     retriever = vectorstore.as_retriever(
         search_type="similarity",
@@ -87,7 +87,7 @@ def load_components():
     )
     return retriever, llm
 
-# Main Q and A prompt 
+# ── Main QA prompt ────────────────────────────────────────
 def build_qa_prompt(language: str) -> PromptTemplate:
     template = f"""You are a strict but caring CBSE Science mentor for Class 10 students.
 Your personality: direct, clear, no-nonsense — like a good school teacher who genuinely wants students to learn.
@@ -123,7 +123,7 @@ Answer (in {language}):"""
         template=template
     )
 
-# Quiz prompt 
+# ── Quiz prompt ───────────────────────────────────────────
 def build_quiz_prompt(topic: str, language: str) -> str:
     return f"""You are a CBSE Science teacher creating a quiz for Class 10 students.
 
@@ -176,7 +176,7 @@ Rules:
 
 Generate the quiz now:"""
 
-# Parse quiz text into structured list
+# ── Parse quiz text into structured list ──────────────────
 def parse_quiz(text: str) -> list:
     questions = []
     blocks = re.split(r'\n(?=Q\d+\.)', text.strip())
@@ -211,7 +211,7 @@ def parse_quiz(text: str) -> list:
 
     return questions
 
-# Render interactive quiz
+# ── Render interactive quiz ───────────────────────────────
 def render_quiz(questions: list):
     if not questions:
         st.warning("Could not parse quiz questions. Please try generating again.")
@@ -225,7 +225,6 @@ def render_quiz(questions: list):
     st.markdown("### 📝 Quiz Time!")
     st.caption(f"Answer all {len(questions)} questions and check your score at the end.")
 
-    # Render each question
     for i, q in enumerate(questions):
         st.markdown("---")
         st.markdown(f"**Question {i+1}: {q['question']}**")
@@ -241,7 +240,7 @@ def render_quiz(questions: list):
         )
 
         if selected:
-            st.session_state.quiz_answers[i] = selected[0]  # stores "A", "B", "C" or "D"
+            st.session_state.quiz_answers[i] = selected[0]
 
         col1, col2 = st.columns([1, 4])
         with col1:
@@ -262,7 +261,7 @@ def render_quiz(questions: list):
             else:
                 st.error(f"❌ Wrong. The correct answer is **{correct_ans}) {correct_text}**")
 
-    # Score — shown only after all questions are checked ─
+    # ── Score at the bottom ───────────────────────────────
     checked_count = len(st.session_state.quiz_checked)
     score = sum(
         1 for i, q in enumerate(questions)
@@ -284,7 +283,7 @@ def render_quiz(questions: list):
             st.session_state.quiz_checked = {}
             st.rerun()
 
-# Build chain with session memory 
+# ── Build chain with session memory ──────────────────────
 def get_chain(retriever, llm, language):
     if "memory" not in st.session_state:
         st.session_state.memory = ConversationBufferWindowMemory(
@@ -294,13 +293,16 @@ def get_chain(retriever, llm, language):
             output_key="answer"
         )
 
-    # This prompt condenses follow-up questions silently — output never shown to the user
-    condense_prompt = PromptTemplate.from_template("""Given the conversation history and a follow-up question, rephrase the follow-up as a standalone question.
-    Return ONLY the rephrased question, nothing else.
-    Chat History:
-    {chat_history}
-    Follow-up question: {question}
-    Standalone question:""")
+    condense_prompt = PromptTemplate.from_template(
+        """Given the conversation history and a follow-up question, rephrase the follow-up as a standalone question.
+Return ONLY the rephrased question, nothing else.
+
+Chat History:
+{chat_history}
+
+Follow-up question: {question}
+Standalone question:"""
+    )
 
     chain = ConversationalRetrievalChain.from_llm(
         llm=llm,
@@ -308,27 +310,28 @@ def get_chain(retriever, llm, language):
         memory=st.session_state.memory,
         return_source_documents=True,
         combine_docs_chain_kwargs={"prompt": build_qa_prompt(language)},
-        condense_question_prompt=condense_prompt,   # ← controls the rephrase step
+        condense_question_prompt=condense_prompt,
         output_key="answer",
-        verbose=False                                # ← stops internal logs leaking
+        verbose=False
     )
     return chain
-# Initialise
+
+# ── Initialise ────────────────────────────────────────────
 with st.spinner("Loading your CBSE tutor..."):
     retriever, llm = load_components()
 
 chain = get_chain(retriever, llm, language)
 
-# Chat history init 
+# ── Chat history init ─────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display previous messages 
+# ── Display previous messages ─────────────────────────────
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# Handle Generate Quiz button click 
+# ── Handle Generate Quiz button click ────────────────────
 if generate_quiz:
     st.session_state.quiz_requested = True
     for key in ["quiz_questions", "quiz_answers", "quiz_checked"]:
@@ -336,7 +339,7 @@ if generate_quiz:
             del st.session_state[key]
     st.rerun()
 
-#Handle Start Quiz confirmation
+# ── Handle Start Quiz confirmation ───────────────────────
 if confirm and quiz_topic.strip():
     with st.spinner("Generating your quiz..."):
         quiz_response = llm.invoke(build_quiz_prompt(quiz_topic.strip(), language))
@@ -351,11 +354,11 @@ if confirm and quiz_topic.strip():
 elif confirm and not quiz_topic.strip():
     st.sidebar.warning("Please enter a topic first.")
 
-#  Display interactive quiz
+# ── Display interactive quiz ──────────────────────────────
 if "quiz_questions" in st.session_state:
     render_quiz(st.session_state.quiz_questions)
 
-# Chat input 
+# ── Chat input ────────────────────────────────────────────
 if question := st.chat_input("Ask a science question..."):
     st.session_state.messages.append({"role": "user", "content": question})
     with st.chat_message("user"):
